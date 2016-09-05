@@ -1,21 +1,31 @@
 package com.heartrate.app;
 
+import android.Manifest;
+import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
+import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Paint.Align;
 import android.hardware.Camera;
 import android.hardware.Camera.PreviewCallback;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
+import android.provider.Settings;
+import android.support.annotation.NonNull;
+import android.support.annotation.StringRes;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.ViewGroup.LayoutParams;
+import android.view.WindowManager;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -32,9 +42,17 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import permissions.dispatcher.NeedsPermission;
+import permissions.dispatcher.OnNeverAskAgain;
+import permissions.dispatcher.OnPermissionDenied;
+import permissions.dispatcher.OnShowRationale;
+import permissions.dispatcher.PermissionRequest;
+import permissions.dispatcher.RuntimePermissions;
+
 /**
  * 程序的主入口
  */
+@RuntimePermissions
 public class MainActivity extends AppCompatActivity {
     private static final AtomicBoolean processing = new AtomicBoolean(false);
     private static final int averageArraySize = 4;
@@ -56,7 +74,6 @@ public class MainActivity extends AppCompatActivity {
     private static TextView mTV_Heart_Rate = null;
     private static TextView mTV_Avg_Pixel_Values = null;
     private static TextView mTV_pulse = null;
-    private static WakeLock wakeLock = null;
     private static int averageIndex = 0;
     //设置默认类型
     private static TYPE currentType = TYPE.GREEN;
@@ -324,8 +341,6 @@ public class MainActivity extends AppCompatActivity {
         mTV_Avg_Pixel_Values = (TextView) findViewById(R.id.id_tv_Avg_Pixel_Values);
         mTV_pulse = (TextView) findViewById(R.id.id_tv_pulse);
 
-        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        wakeLock = pm.newWakeLock(PowerManager.FULL_WAKE_LOCK, "DoNotDimScreen");
     }
 
     //	曲线
@@ -455,21 +470,88 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onResume() {
         super.onResume();
-        wakeLock.acquire();
-        camera = Camera.open();
-        startTime = System.currentTimeMillis();
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        MainActivityPermissionsDispatcher.needCameraPermissionWithCheck(this);
     }
 
     @Override
     public void onPause() {
         super.onPause();
-        wakeLock.release();
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         camera.setPreviewCallback(null);
         camera.stopPreview();
         camera.release();
         camera = null;
     }
 
+
+    @NeedsPermission(Manifest.permission.CAMERA)
+    void needCameraPermission() {
+        camera = Camera.open();
+        startTime = System.currentTimeMillis();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        MainActivityPermissionsDispatcher.onRequestPermissionsResult(this, requestCode, grantResults);
+    }
+
+    @OnShowRationale(Manifest.permission.CAMERA)
+    void onShowCameraRationale(PermissionRequest request) {
+        showRationaleDialog(R.string.required_permissions_promo, request);
+    }
+
+    @OnPermissionDenied(Manifest.permission.CAMERA)
+    void onCameraDenied() {
+        finish();
+    }
+
+    @OnNeverAskAgain(Manifest.permission.CAMERA)
+    void onCameraNeverAsk() {
+        showNeverAskAgainDialog(R.string.enable_permission_procedure);
+    }
+    private void showRationaleDialog(@StringRes int messageResId, final PermissionRequest request) {
+        new AlertDialog.Builder(this)
+                .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(@NonNull DialogInterface dialog, int which) {
+                        request.proceed();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(@NonNull DialogInterface dialog, int which) {
+                        request.cancel();
+                    }
+                })
+                .setCancelable(false)
+                .setTitle(R.string.permission_title)
+                .setMessage(messageResId)
+                .show();
+    }
+    private void showNeverAskAgainDialog(@StringRes int messageResId) {
+        new AlertDialog.Builder(this)
+                .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(@NonNull DialogInterface dialog, int which) {
+                        startSettingsPermission(getApplicationContext());
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .setCancelable(false)
+                .setTitle(R.string.permission_never_ask_title)
+                .setMessage(messageResId)
+                .show();
+    }
+    private static final String PACKAGE_URI_PREFIX = "package:";
+    public static void startSettingsPermission(Context context) {
+        final Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse(PACKAGE_URI_PREFIX + context.getPackageName()));
+        if (!(context instanceof Activity))
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(intent);
+    }
     /**
      * 类型枚举
      */
